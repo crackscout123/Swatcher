@@ -1,0 +1,104 @@
+services:
+
+  backend:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/var/www/html
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - APP_ENV=local
+    networks:
+      - swatcher
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8000:80"
+    volumes:
+      - ./backend:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+    networks:
+      - swatcher
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    networks:
+      - swatcher
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: swatcher
+      POSTGRES_USER: swatcher
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - swatcher
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - swatcher
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    command:
+      - '--storageDataPath=/storage'
+      - '--retentionPeriod=90d'
+      - '--httpListenAddr=:8428'
+    volumes:
+      - vm_data:/storage
+    ports:
+      - "8428:8428"
+    networks:
+      - swatcher
+
+  queue:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/var/www/html
+    command: php artisan queue:work --sleep=3 --tries=3
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - swatcher
+
+  scheduler:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/var/www/html
+    command: sh -c "while true; do php artisan schedule:run --verbose --no-interaction & sleep 60; done"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - swatcher
+
+volumes:
+  postgres_data:
+  redis_data:
+  vm_data:
+
+networks:
+  swatcher:
+    driver: bridge
